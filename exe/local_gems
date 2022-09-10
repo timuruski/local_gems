@@ -1,39 +1,76 @@
-case $1 in
-  --init)
-    # 1. Symlink Gemfile -> Gemfile.local
-    if [[ ! -L Gemfile.local ]]
-    then
-      ln -s Gemfile Gemfile.local
-    fi
+#!/usr/bin/env ruby
 
-    # 2. Add Gemfile.local.lock" to .gitignore
-    if [[ ! -f ".gitignore" ]] || ! grep -q "Gemfile.local.lock" .gitignore
-    then
-      echo "Gemfile.local.lock" >> .gitignore
-    fi
+require "pathname"
 
-    # 3. Add local_gems? method to Gemfile.
-    if ! grep -q "def local_gems\?" Gemfile
-    then
-      echo """
-Add this definition to your Gemfile, to check when configuring gems:
-
-def local_gems?
-  File.basename(__FILE__) == "Gemfile.local"
+at_exit do
+  case ARGV[0]
+  when "--init", "init"
+    init
+  when "--enable", "enable"
+    enable
+  when "--disable", "disable"
+    disable
+  when "--reset", "reset"
+    reset
+  else
+    help
+  end
 end
-"""
-    fi
-    ;;
 
-  --enable)
-    bundle config --local gemfile Gemfile.local
-    ;;
+def init
+  gemfile_local = Pathname.new("Gemfile.local")
+  if !gemfile_local.symlink?
+    gemfile_local.make_symlink("Gemfile")
+  end
 
-  --disable)
-    bundle config unset --local gemfile
-    ;;
+  gitignore = Pathname.new(".gitignore")
+  if !gitignore.exist? || gitignore.read.include?("Gemfile.local.lock")
+    gitignore.open("w") do |f|
+      f.puts "Gemfile.local.lock"
+    end
+  end
 
-  "")
-    bundle config gemfile
-    ;;
-esac
+  gemfile = Pathname.new("Gemfile")
+  if ! gemfile.read.include?("def local_gems")
+    puts <<~EOS
+      Add this definition to your Gemfile, to check when configuring gems:
+
+      def local_gems?
+        File.basename(__FILE__) == "Gemfile.local"
+      end
+    EOS
+  end
+end
+
+def enable
+  init unless init?
+  system "bundle config --local gemfile Gemfile.local"
+end
+
+def disable
+  system "bundle config unset --local gemfile"
+end
+
+def reset
+  gemfile_local = Pathname.new("Gemfile.local")
+  gemfile_local.unlink if gemfile_local.exist?
+
+  gemfile_local_lock = Pathname.new("Gemfile.local.lock")
+  gemfile_local_lock.unlink if gemfile_local_lock.exist?
+
+  disable
+end
+
+def init?
+  File.symlink?("Gemfile.local")
+end
+
+def help
+  puts <<~EOS
+    local_gems usage
+       init -- Sets up symlinked Gemfile.local
+       enable -- Configure bundler to use local gems
+       disable -- Configure bundler to use remote gems
+       reset -- Remove Gemfile.local.lock
+  EOS
+end
